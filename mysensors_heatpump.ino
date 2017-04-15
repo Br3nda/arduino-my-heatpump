@@ -1,13 +1,12 @@
-#include <MySensor.h>
-#include <SPI.h>
-#include <Arduino.h>
-#include "LedPixels.h"
-#include <Bounce2.h>
+#define MY_RADIO_NRF24
+#define MY_DEBUG
 
+#include "SensorConfig.h"
+#include <MySensors.h>
 #include <PanasonicCKPHeatpumpIR.h>
 #include <PanasonicHeatpumpIR.h>
 
-MySensor gw;
+
 MyMessage powerMsg(POWER_ID, V_STATUS);
 MyMessage modeMsg(MODE_ID, V_HVAC_FLOW_STATE);
 MyMessage fanMsg(FAN_ID, V_PERCENTAGE);
@@ -16,12 +15,12 @@ MyMessage vdirMsg(VDIR_ID, V_VAR1);
 MyMessage hdirMsg(HDIR_ID, V_VAR2);
 MyMessage strengthMsg(STRENGTH_ID, V_STATUS);
 
+MyMessage msgHVACSetPointC(CHILD_ID_HVAC, V_HVAC_SETPOINT_COOL);
+MyMessage msgHVACSpeed(CHILD_ID_HVAC, V_HVAC_SPEED);
+MyMessage msgHVACFlowState(CHILD_ID_HVAC, V_HVAC_FLOW_STATE);
+
 IRSenderPWM irSender(3);       // IR led on Arduino digital pin 3, using Arduino PWM
-
 HeatpumpIR *heatpumpIR = new PanasonicNKEHeatpumpIR();
-
-// Instantiate a Bounce object
-Bounce debouncer = Bounce();
 
 //Some global variables to hold the states
 int POWER_STATE;
@@ -32,28 +31,41 @@ int VDIR_STATE;
 int HDIR_STATE;
 bool STRENGTH_STATE;
 
+void presentation() {
+  present(POWER_ID, S_DOOR);
+  present(CHILD_ID_HVAC, S_HVAC, "Thermostat");
+
+  // Send the sketch version information to the gateway and Controller
+  sendSketchInfo("Heatpump", "2.0");
+
+  present(POWER_ID, S_BINARY);
+  present(MODE_ID, S_HVAC);
+  present(FAN_ID, S_HVAC);
+  present(TEMP_ID, S_HVAC);
+  present(VDIR_ID, S_CUSTOM);
+  present(HDIR_ID, S_CUSTOM);
+  present(STRENGTH_ID, S_BINARY);
+
+  // Load our values on start
+  POWER_STATE = loadState(POWER_ID);
+  TEMP_STATE = loadState(TEMP_ID);
+  FAN_STATE = loadState(FAN_ID);
+  MODE_STATE = loadState(MODE_ID);
+  HDIR_STATE = loadState(HDIR_STATE);
+  VDIR_STATE = loadState(VDIR_STATE);
+  STRENGTH_STATE = loadState(STRENGTH_ID);
+}
 
 void loop() {
-  debouncer.update();
-  int value = debouncer.read();
-  // Turn on or off the LED as determined by the state :
-  if ( value == HIGH) {
-    setLed(blue);
-    sendHeatpumpCommand();
-    turnOffLeds();
-    gw.wait(1000);
-  }
-  gw.process();
 }
 
 void handlePowerMessage(bool newState) {
   if (newState) {
     POWER_STATE = POWER_ON;
-  }
-  else {
+  } else {
     POWER_STATE = POWER_OFF;
   }
-  gw.saveState(POWER_ID, newState);
+  saveState(POWER_ID, newState);
 }
 
 void handleModeMessge(int newMode) {
@@ -70,7 +82,7 @@ void handleModeMessge(int newMode) {
       MODE_STATE = MODE_DRY; break;
   }
   MODE_STATE = newMode;
-  gw.saveState(MODE_ID, newMode);
+  saveState(MODE_ID, newMode);
 }
 
 void handleFanMessage(int newFan) {
@@ -94,12 +106,12 @@ void handleFanMessage(int newFan) {
       FAN_STATE = FAN_AUTO; break;
   }
   FAN_STATE = newFan;
-  gw.saveState(FAN_ID, newFan);
+  saveState(FAN_ID, newFan);
 }
 
 void handleTempMessage(int newTemp) {
   TEMP_STATE = newTemp;
-  gw.saveState(TEMP_ID, newTemp);
+  saveState(TEMP_ID, newTemp);
 }
 
 void handleVdirMessage(int newVDir) {
@@ -112,7 +124,7 @@ void handleHDirMessage(int newHDir) {
 
 void handleStrengthMessage(bool newStrength) {
   STRENGTH_STATE = newStrength;
-//  gw.saveState(newStrength);
+  saveState(STRENGTH_STATE, newStrength);
 }
 
 void sendHeatpumpCommand() {
@@ -125,8 +137,7 @@ void sendHeatpumpCommand() {
   if (STRENGTH_STATE) {
    powerful = true;
    quiet = false;
-  }
-  else {
+  } else {
     powerful= false;
     quiet = true;
   }
@@ -135,17 +146,18 @@ void sendHeatpumpCommand() {
 }
 
 void incomingMessage(const MyMessage &message) {
-  setLed(magenta);
+
   // We only expect one type of message from controller. But we better check anyway.
   if (message.isAck()) {
      Serial.println("This is an ack from gateway");
+     return;
   }
-   Serial.print("Incoming change for sensor:");
-   Serial.print(message.sensor);
-   Serial.print(", New status: ");
-   Serial.println(message.getBool());
+  Serial.print("Incoming change for sensor:");
+  Serial.print(message.sensor);
+  Serial.print(", New status: ");
+  Serial.println(message.getBool());
 
-   switch(message.sensor) {
+  switch(message.sensor) {
     case POWER_ID: {
       bool newState = message.getBool();
       handlePowerMessage(newState);
@@ -183,40 +195,4 @@ void incomingMessage(const MyMessage &message) {
     }
    }
   sendHeatpumpCommand();
-  turnOffLeds();
 }
-
-
-void setup()  {
-
-  debouncer.attach(PUSHBUTTON_PIN);
-
-  setupLeds();
-  turnOffLeds();
-
-  gw.begin(incomingMessage, AUTO, false);
-
-  // Send the sketch version information to the gateway and Controller
-  gw.sendSketchInfo("Heatpump", "1.0");
-
-  // Register all sensors to gw (they will be created as child devices)
-  gw.present(POWER_ID, S_BINARY);
-  gw.present(MODE_ID, S_HVAC);
-  gw.present(FAN_ID, S_HVAC);
-  gw.present(TEMP_ID, S_HVAC);
-  gw.present(VDIR_ID, S_CUSTOM);
-  gw.present(HDIR_ID, S_CUSTOM);
-  gw.present(STRENGTH_ID, S_BINARY);
-
-  // Load our values on start
-  POWER_STATE = gw.loadState(POWER_ID);
-  TEMP_STATE = gw.loadState(TEMP_ID);
-  FAN_STATE = gw.loadState(FAN_ID);
-  MODE_STATE = gw.loadState(MODE_ID);
-  HDIR_STATE = gw.loadState(HDIR_STATE);
-  VDIR_STATE = gw.loadState(VDIR_STATE);
-  STRENGTH_STATE = gw.loadState(STRENGTH_ID);
-
-}
-
-
